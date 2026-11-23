@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, CalendarDays, ChevronRight, ClipboardList, Pencil, Phone, Plus } from 'lucide-react'
-import { dateTime, dueLabel, memberFor, members, sortTasks, stages, type CRM, type Lead, type Stage, type Task } from '../../domain/crm'
+import { dateTime, dueLabel, memberFor, sortTasks, stageLabel, type CRM, type Lead, type Task } from '../../domain/crm'
 import { navigate, type Change } from '../../app/model'
 import { Avatar, Badge, Button, Empty, Modal, PageTitle, SearchBox, SectionTitle, Select, TabPanel, Tabs, TextLink } from '../../ui/components'
 import { LeadForm } from './LeadForm'
@@ -9,7 +9,6 @@ import { TaskForm, Work } from '../work/Work'
 import { FilterSelect } from '../../ui/FilterSelect'
 
 const allStages = '전체'
-const ownerOptions = members.map(member => ({ value: member.id, label: member.name }))
 
 function leadUrl(id?: string, filters?: URLSearchParams, values?: Record<string, string>) {
   const query = new URLSearchParams()
@@ -29,6 +28,7 @@ function TaskDue({ task }: { task: Task }) {
 }
 
 export function Leads({ data, params, change }: { data: CRM; params: URLSearchParams; change: Change }) {
+  const ownerOptions = data.members.map(member => ({ value: member.id, label: member.name }))
   const [search, setSearch] = useState(params.get('q') ?? '')
   const [stage, setStage] = useState(params.get('stage') ?? allStages)
   const [owner, setOwner] = useState(params.get('owner') ?? '')
@@ -63,9 +63,9 @@ export function Leads({ data, params, change }: { data: CRM; params: URLSearchPa
     <PageTitle title="리드"><Button tone="primary" onClick={() => setCreating(true)}><Plus size={16}/>리드 등록</Button></PageTitle>
     <section className="panel lead-list">
       <div className="stage-filters" role="group" aria-label="영업 단계 필터">
-        {[allStages, ...stages].map(phase => <button type="button" key={phase} aria-pressed={stage === phase}
-          onClick={() => updateFilters(search, phase, owner)}>
-          {phase}<span>{phase === allStages ? matching.length : matching.filter(lead => lead.stage === phase).length}</span>
+        {[{ id: allStages, label: allStages }, ...data.stages].map(phase => <button type="button" key={phase.id} aria-pressed={stage === phase.id}
+          onClick={() => updateFilters(search, phase.id, owner)}>
+          {phase.label}<span>{phase.id === allStages ? matching.length : matching.filter(lead => lead.stage === phase.id).length}</span>
         </button>)}
       </div>
       <div className="toolbar lead-toolbar">
@@ -82,8 +82,8 @@ export function Leads({ data, params, change }: { data: CRM; params: URLSearchPa
           const next = openTasks.find(task => task.leadId === lead.id)
           return <tr key={lead.id}>
             <td><TextLink className="row-title" to={leadUrl(lead.id, filters)}>{lead.company}</TextLink><span className="row-meta">{lead.title}</span></td>
-            <td><Badge>{lead.stage}</Badge></td>
-            <td><span className="person"><Avatar id={lead.ownerId}/>{memberFor(lead.ownerId).name}</span></td>
+            <td><Badge>{stageLabel(data, lead.stage)}</Badge></td>
+            <td><span className="person"><Avatar member={memberFor(data, lead.ownerId)}/>{memberFor(data, lead.ownerId).name}</span></td>
             <td>{next ? <div className="next-cell"><TextLink to={leadUrl(lead.id, filters, { tab: '업무', task: next.id })}>{next.title}</TextLink><TaskDue task={next}/></div> : <span className="muted">미정</span>}</td>
             <td className="numeric">{contact ? dateTime(contact.at) : '기록 없음'}</td>
           </tr>
@@ -106,23 +106,24 @@ export function LeadDetail({ data, change, lead, params }: { data: CRM; change: 
   const activities = data.activities.filter(item => item.leadId === lead.id)
   const nextTasks = sortTasks(data.tasks.filter(item => item.leadId === lead.id && item.status !== '완료'))
   const latestContact = activities.find(item => item.type === '통화' || item.type === '미팅')
-  const stageIndex = stages.indexOf(lead.stage)
+  const stageIndex = data.stages.findIndex(stage => stage.id === lead.stage)
+  const ownerOptions = data.members.filter(member => member.active !== false || member.id === lead.ownerId)
+    .map(member => ({ value: member.id, label: member.name }))
   const tabUrl = (name: typeof tabs[number], extra?: Record<string, string>) => leadUrl(lead.id, params, { tab: name, ...extra })
   function changeStage(value: string) {
     if (value === lead.stage) return
     change(prev => ({
       ...prev,
-      leads: prev.leads.map(item => item.id === lead.id ? { ...item, stage: value as Stage } : item),
-      activities: [{ id: crypto.randomUUID(), leadId: lead.id, type: '단계 변경', text: `${lead.stage} → ${value}`, authorId: data.activeMemberId, at: new Date().toISOString() }, ...prev.activities],
+      leads: prev.leads.map(item => item.id === lead.id ? { ...item, stage: value } : item),
+      activities: [{ id: crypto.randomUUID(), leadId: lead.id, type: '단계 변경', text: `${stageLabel(data, lead.stage)} → ${stageLabel(data, value)}`, authorId: data.activeMemberId, at: new Date().toISOString() }, ...prev.activities],
     }), '영업 단계를 변경했어요.')
   }
-  function logActivity(event: FormEvent<HTMLFormElement>) {
+  async function logActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const text = String(form.get('text')).trim()
     if (!text) return
-    change(prev => ({ ...prev, activities: [{ id: crypto.randomUUID(), leadId: lead.id, type: String(form.get('type')) as '통화' | '미팅' | '메모', text, authorId: data.activeMemberId, at: new Date().toISOString() }, ...prev.activities] }), '영업 활동을 기록했어요.')
-    setRecording(false)
+    if (await change(prev => ({ ...prev, activities: [{ id: crypto.randomUUID(), leadId: lead.id, type: String(form.get('type')) as '통화' | '미팅' | '메모', text, authorId: data.activeMemberId, at: new Date().toISOString() }, ...prev.activities] }), '영업 활동을 기록했어요.')) setRecording(false)
   }
   const recordActivity = <Button onClick={() => setRecording(true)}><Phone size={15}/>활동 기록</Button>
   return <>
@@ -133,13 +134,13 @@ export function LeadDetail({ data, change, lead, params }: { data: CRM; change: 
     </span>}/>
     <section className="panel lead-status" aria-label="영업 진행과 책임자">
       <div className="lead-status-controls">
-        <label>영업 단계<Select label="영업 단계" value={lead.stage} options={stages} onChange={changeStage}/></label>
+        <label>영업 단계<Select label="영업 단계" value={lead.stage} options={data.stages.map(stage => ({ value: stage.id, label: stage.label }))} onChange={changeStage}/></label>
         <label>리드 책임자<Select label="리드 책임자" value={lead.ownerId} options={ownerOptions}
           onChange={ownerId => change(prev => ({ ...prev, leads: prev.leads.map(item => item.id === lead.id ? { ...item, ownerId } : item) }), '리드 책임자를 변경했어요.')}/></label>
       </div>
       <ol className="lead-stage-track" aria-label="영업 진행 순서">
-        {stages.map((name, index) => <li key={name} aria-current={name === lead.stage ? 'step' : undefined}
-          className={index < stageIndex ? 'stage-passed' : ''}>{name}</li>)}
+        {data.stages.map((stage, index) => <li key={stage.id} aria-current={stage.id === lead.stage ? 'step' : undefined}
+          className={index < stageIndex ? 'stage-passed' : ''}>{stage.label}</li>)}
       </ol>
     </section>
     <section className="panel lead-tabs">
@@ -162,7 +163,7 @@ export function LeadDetail({ data, change, lead, params }: { data: CRM; change: 
             {nextTasks.length ? <div className="mini-list">{nextTasks.slice(0, 3).map(task =>
               <a className="mini-row" key={task.id} href={`#${tabUrl('업무', { task: task.id })}`}>
                 <span className="mini-icon mail-icon"><ClipboardList size={16}/></span>
-                <span className="mini-text"><strong>{task.title}</strong><span>{memberFor(task.assigneeId).name} · {task.status}</span></span>
+                <span className="mini-text"><strong>{task.title}</strong><span>{memberFor(data, task.assigneeId).name} · {task.status}</span></span>
                 <TaskDue task={task}/><ChevronRight size={15} className="row-chevron"/>
               </a>)}</div> : <Empty title="예정된 업무가 없어요"/>}
           </section>
@@ -174,7 +175,7 @@ export function LeadDetail({ data, change, lead, params }: { data: CRM; change: 
               </div>
             </SectionTitle>
             {latestContact ? <div className="info-content recent-contact">
-              <div><Badge>{latestContact.type}</Badge><span className="muted">{dateTime(latestContact.at)} · {memberFor(latestContact.authorId).name}</span></div>
+              <div><Badge>{latestContact.type}</Badge><span className="muted">{dateTime(latestContact.at)} · {memberFor(data, latestContact.authorId).name}</span></div>
               <p className="message-body">{latestContact.text}</p>
             </div> : <Empty title="아직 접촉 기록이 없어요"/>}
           </section>
@@ -182,7 +183,7 @@ export function LeadDetail({ data, change, lead, params }: { data: CRM; change: 
       </div>}
       {tab === '업무' && <Work key={params.get('task') ?? lead.id} data={data} change={change} leadId={lead.id} taskId={params.get('task')}/>}
       {tab === '활동' && <section className="panel"><SectionTitle title="활동 이력" count={activities.length}>{recordActivity}</SectionTitle>
-        {activities.length ? <div className="mini-list">{activities.map(item => <div key={item.id} className="mini-row"><Badge>{item.type}</Badge><span className="mini-text"><strong>{item.text}</strong><span>{memberFor(item.authorId).name} · {dateTime(item.at)}</span></span></div>)}</div> : <Empty title="아직 활동 기록이 없어요" detail="고객과의 통화나 미팅을 기록할 수 있어요."/>}
+        {activities.length ? <div className="mini-list">{activities.map(item => <div key={item.id} className="mini-row"><Badge>{item.type}</Badge><span className="mini-text"><strong>{item.text}</strong><span>{memberFor(data, item.authorId).name} · {dateTime(item.at)}</span></span></div>)}</div> : <Empty title="아직 활동 기록이 없어요" detail="고객과의 통화나 미팅을 기록할 수 있어요."/>}
       </section>}
     </TabPanel>
     {editing && <LeadForm data={data} change={change} lead={lead} onClose={() => setEditing(false)}/>}

@@ -1,4 +1,4 @@
-import { dateKey, type CRM, type Mail } from '../domain/crm'
+import { dateKey, members, stages, type CRM, type Mail } from '../domain/crm'
 
 export function minutesAgo(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString()
@@ -14,6 +14,8 @@ export function incomingMail(): Mail {
 
 export function createDemoData(): CRM {
   return {
+    members,
+    stages: stages.map(label => ({ id: label, label })),
     activeMemberId: 'minji',
     profiles: { minji: 'minji@salesman.example', hyunwoo: '', seoyeon: '' },
     mailbox: { status: 'ready', lastSuccess: minutesAgo(12) },

@@ -10,7 +10,7 @@ export function CustomerInfo({ lead, change }: { lead: Lead; change: Change }) {
   const [editing, setEditing] = useState(false)
   const profile = lead.customerProfile
 
-  function save(event: FormEvent<HTMLFormElement>) {
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
@@ -25,8 +25,8 @@ export function CustomerInfo({ lead, change }: { lead: Lead; change: Change }) {
       field.reportValidity()
       return
     }
-    if (expectedUsers !== undefined && (!Number.isSafeInteger(expectedUsers) || expectedUsers < 1)) {
-      users.setCustomValidity('사용 인원은 1명 이상의 정수로 입력해 주세요.')
+    if (expectedUsers !== undefined && (!Number.isInteger(expectedUsers) || expectedUsers < 1 || expectedUsers > 2147483647)) {
+      users.setCustomValidity('사용 인원 범위를 확인해 주세요.')
       users.reportValidity()
       return
     }
@@ -38,11 +38,11 @@ export function CustomerInfo({ lead, change }: { lead: Lead; change: Change }) {
       adoptionPurpose: read('adoptionPurpose'),
     }
     const customer = { company, contact: read('contact'), email: read('email'), customerProfile }
-    change(current => ({
+    const saved = await change(current => ({
       ...current,
       leads: current.leads.map(row => row.id === lead.id ? { ...row, ...customer } : row),
     }), '고객 정보를 저장했어요.')
-    setEditing(false)
+    if (saved) setEditing(false)
   }
 
   return <section className="panel customer-info" aria-label="고객 정보">

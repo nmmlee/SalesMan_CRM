@@ -8,7 +8,7 @@ export function Templates({ data, change }: { data: CRM; change: Change }) {
   const memberId = data.activeMemberId
   const [editor, setEditor] = useState<Template | 'new' | null>(null)
   const templates = data.templates.filter(item => item.ownerId === memberId)
-  function saveTemplate(event: FormEvent<HTMLFormElement>) {
+  async function saveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const name = String(form.get('name')).trim()
@@ -16,8 +16,7 @@ export function Templates({ data, change }: { data: CRM; change: Change }) {
     const body = String(form.get('body')).trim()
     if (!name || !subject || !body) return
     const next = { id: editor && editor !== 'new' ? editor.id : crypto.randomUUID(), ownerId: memberId, name, subject, body }
-    change(prev => ({ ...prev, templates: upsert(prev.templates, next) }), '템플릿을 저장했어요.')
-    setEditor(null)
+    if (await change(prev => ({ ...prev, templates: upsert(prev.templates, next) }), '템플릿을 저장했어요.')) setEditor(null)
   }
   return <>
     <section className="template-tools" aria-label="내 메일 템플릿">

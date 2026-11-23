@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { FilePenLine, Plus } from 'lucide-react'
 import { applyTemplate, dateTime, memberFor, upsert, type CRM, type Draft, type Lead, type Template } from '../../domain/crm'
 import type { Change } from '../../app/model'
 import { Avatar, Button, Empty, Modal, PageTitle, SectionTitle } from '../../ui/components'
 
 function DraftEditor({ data, change, lead, draft, onClose }: { data: CRM; change: Change; lead: Lead; draft?: Draft; onClose: () => void }) {
-  const member = memberFor(data.activeMemberId)
+  const member = memberFor(data, data.activeMemberId)
   const templates = data.templates.filter(item => item.ownerId === member.id)
   const recipients = [...new Set([lead.email, ...data.mails.filter(mail => mail.leadId === lead.id).map(mail => mail.email)].filter(Boolean))]
   const [from, setFrom] = useState(draft?.from ?? data.profiles[member.id] ?? '')
@@ -22,15 +22,14 @@ function DraftEditor({ data, change, lead, draft, onClose }: { data: CRM; change
     setPendingTemplate(undefined)
     setError('')
   }
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault()
     if (!subject.trim() || !body.trim()) {
       setError('제목과 본문을 입력해 주세요.')
       return
     }
     const next = { id: draft?.id ?? crypto.randomUUID(), ownerId: member.id, leadId: lead.id, from: from.trim(), to: to.trim(), subject: subject.trim(), body, updatedAt: new Date().toISOString(), templateId }
-    change(prev => ({ ...prev, drafts: upsert(prev.drafts, next) }), '메일 초안을 저장했어요.')
-    onClose()
+    if (await change(prev => ({ ...prev, drafts: upsert(prev.drafts, next) }), '메일 초안을 저장했어요.')) onClose()
   }
   return <Modal title={draft ? '메일 초안 수정' : '메일 초안 만들기'} onClose={onClose}><form className="form" onSubmit={submit}>
     <p className="muted">{lead.company} · {lead.title}</p>
@@ -54,8 +53,8 @@ function DraftEditor({ data, change, lead, draft, onClose }: { data: CRM; change
   </form></Modal>
 }
 
-export function Profile({ data, change }: { data: CRM; change: Change }) {
-  const member = memberFor(data.activeMemberId)
+export function Profile({ data, change, passwordForm }: { data: CRM; change: Change; passwordForm?: ReactNode }) {
+  const member = memberFor(data, data.activeMemberId)
   const [choosingLead, setChoosingLead] = useState(false)
   const [editor, setEditor] = useState<{ leadId: string; draft?: Draft }>()
   const lead = data.leads.find(item => item.id === editor?.leadId)
@@ -63,13 +62,17 @@ export function Profile({ data, change }: { data: CRM; change: Change }) {
   return <>
     <PageTitle title="마이페이지" subtitle="내 업무용 메일 주소와 저장한 초안을 관리하세요."/>
     <section className="panel profile-panel"><SectionTitle title="내 프로필"/>
-      <div className="profile-identity"><Avatar id={member.id} size="avatar-large"/><div><strong>{member.name}</strong><span>{member.role}</span></div></div>
+      <div className="profile-identity"><Avatar member={member} size="avatar-large"/><div><strong>{member.name}</strong><span>{member.role}</span></div></div>
       <form className="form profile-form" onSubmit={event => {
         event.preventDefault()
         const email = String(new FormData(event.currentTarget).get('email')).trim()
         change(prev => ({ ...prev, profiles: { ...prev.profiles, [member.id]: email } }), '업무용 메일 주소를 저장했어요.')
       }}><label>개인 업무용 메일 주소<input type="email" name="email" defaultValue={data.profiles[member.id]} placeholder="name@company.com"/></label><Button type="submit" tone="primary">주소 저장</Button></form>
     </section>
+    {passwordForm && <section className="panel profile-panel">
+      <SectionTitle title="비밀번호 변경"/>
+      <div className="info-content profile-password">{passwordForm}</div>
+    </section>}
     <section className="panel">
       <SectionTitle title="내 메일 초안" count={drafts.length}>
         <Button disabled={!data.leads.length} onClick={() => setChoosingLead(true)}><Plus size={16}/>메일 초안 만들기</Button>

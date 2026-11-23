@@ -1,4 +1,4 @@
-import type { CRM } from '../domain/crm'
+import { members, stages, type CRM } from '../domain/crm'
 import { createDemoData } from './demo'
 
 const storageKey = 'salesman-crm-demo-v1'
@@ -8,6 +8,8 @@ export function loadDemo(): CRM {
     const saved = localStorage.getItem(storageKey)
     if (saved) {
       const data = JSON.parse(saved) as CRM
+      data.members ??= members
+      data.stages ??= stages.map(label => ({ id: label, label }))
       if (data.mailbox.status === 'working') data.mailbox.status = 'ready'
       return data
     }

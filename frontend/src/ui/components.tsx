@@ -1,12 +1,11 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Check, ChevronDown, Inbox, Search, X } from 'lucide-react'
-import { memberFor } from '../domain/crm'
+import type { Member } from '../domain/crm'
 
 export function Button({ children, tone = 'secondary', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'secondary' | 'quiet' | 'danger' }) {
   return <button type="button" className={`button button-${tone} ${className}`} {...props}>{children}</button>
 }
-export function Avatar({ id, size = '' }: { id: string; size?: string }) {
-  const member = memberFor(id)
+export function Avatar({ member, size = '' }: { member: Member; size?: string }) {
   return <span className={`avatar avatar-${member.color} ${size}`} aria-hidden="true">{member.initials}</span>
 }
 const tones: Record<string, string> = {

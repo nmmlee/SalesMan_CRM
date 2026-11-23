@@ -6,17 +6,17 @@ import { Badge, Button, Empty, PageTitle, SearchBox, SectionTitle, TextLink } fr
 import { FilterSelect } from '../../ui/FilterSelect'
 import { LeadForm } from '../leads/LeadForm'
 
-export function SyncBanner({ data, syncMailbox }: { data: CRM; syncMailbox: () => void }) {
+export function SyncBanner({ data, syncMailbox }: { data: CRM; syncMailbox?: () => void }) {
   const { status, lastSuccess } = data.mailbox
   const connected = status === 'ready' || status === 'working' || status === 'failed'
   const copy = { disconnected: '공용 메일이 연결되지 않았어요', ready: '공용 메일 자동 수집 연결됨', working: '메일을 가져오는 중', failed: '메일을 가져오지 못했어요', reconnect: '메일 연결을 확인해 주세요' }[status]
   return <section className={`sync-banner sync-${status}`} aria-label="메일 동기화 상태"><span className="sync-icon">{status === 'failed' || status === 'reconnect' ? <CircleAlert size={18}/> : <InboxIcon size={18}/>}</span>
     <div role="status"><strong>{copy}</strong><span>{lastSuccess ? `마지막 성공 ${dateTime(lastSuccess)}` : '아직 동기화 기록이 없어요'}</span></div>
-    {connected ? <Button onClick={syncMailbox} disabled={status === 'working'}><RefreshCw size={15} className={status === 'working' ? 'spinning' : ''}/>{status === 'failed' ? '다시 시도' : '지금 동기화'}</Button> : <TextLink to="/settings" className="button button-secondary">팀 설정</TextLink>}
+    {connected && syncMailbox ? <Button onClick={syncMailbox} disabled={status === 'working'}><RefreshCw size={15} className={status === 'working' ? 'spinning' : ''}/>{status === 'failed' ? '다시 시도' : '지금 동기화'}</Button> : <TextLink to="/settings" className="button button-secondary">팀 설정</TextLink>}
   </section>
 }
 
-export function Inbox({ data, change, id, params, syncMailbox }: { data: CRM; change: Change; id?: string; params: URLSearchParams; syncMailbox: () => void }) {
+export function Inbox({ data, change, id, params, syncMailbox }: { data: CRM; change: Change; id?: string; params: URLSearchParams; syncMailbox?: () => void }) {
   const [search, setSearch] = useState(() => params.get('q') ?? '')
   const [status, setStatus] = useState(() => params.get('status') ?? '전체 상태')
   const [oldest, setOldest] = useState(false)

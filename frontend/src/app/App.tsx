@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-import { BriefcaseBusiness, ChevronDown, CircleCheck, House, Inbox as InboxIcon, Settings as SettingsIcon, UserRound, UsersRound } from 'lucide-react'
-import { mailStatus, memberFor, members } from '../domain/crm'
-import { Avatar, Empty, Toast } from '../ui/components'
+import { BriefcaseBusiness, ChevronDown, CircleCheck, House, Inbox as InboxIcon, LogOut, Settings as SettingsIcon, UserRound, UsersRound } from 'lucide-react'
+import { mailStatus, memberFor, type CRM } from '../domain/crm'
+import { Avatar, Button, Empty, Toast } from '../ui/components'
 import { Inbox } from '../features/inbox/Inbox'
 import { Home } from '../features/home/Home'
 import { LeadDetail, Leads } from '../features/leads/Leads'
 import { Work } from '../features/work/Work'
 import { Profile } from '../features/profile/Profile'
 import { Settings } from '../features/settings/Settings'
-import { useCRM, useRoute } from './model'
+import { useDemoCRM, useRemoteCRM, useRoute, type Change } from './model'
+import { AuthPanel, Login, PasswordForm, serverMode, signOut, useSession, type SessionUser } from './auth'
 
 const nav = [
   { key: '', name: '홈', icon: House, path: '/' },
@@ -18,9 +19,46 @@ const nav = [
 ]
 
 export function App() {
-  const { data, change, message, syncMailbox, demoAutoSync } = useCRM()
+  if (serverMode) return <OnlineApp/>
+  return <DemoApp/>
+}
+
+function DemoApp() {
+  const { data, change, message, syncMailbox, demoAutoSync } = useDemoCRM()
+  useEffect(() => {
+    const timer = window.setTimeout(demoAutoSync, 18_000)
+    return () => window.clearTimeout(timer)
+  }, [])
+  return <Workspace data={data} change={change} message={message} teamName="영업팀" syncMailbox={syncMailbox}/>
+}
+
+function OnlineApp() {
+  const { user, reload } = useSession()
+  if (user === undefined) return <AuthPanel title="로그인 상태 확인 중"/>
+  if (!user) return <Login onAuthenticated={reload}/>
+  return <ConnectedWorkspace key={user.id} user={user} onSignedOut={reload}/>
+}
+
+function ConnectedWorkspace({ user, onSignedOut }: { user: SessionUser; onSignedOut: () => void }) {
+  const [logoutError, setLogoutError] = useState('')
+  const { data, change, message, error, refresh } = useRemoteCRM(user.id)
+  const logout = () => signOut().then(onSignedOut).catch(() => setLogoutError('로그아웃하지 못했어요. 다시 시도해 주세요.'))
+  if (logoutError) return <AuthPanel title="로그아웃하지 못했어요"><p role="alert">{logoutError}</p>
+    <Button onClick={() => setLogoutError('')}>돌아가기</Button></AuthPanel>
+  if (error) return <AuthPanel title="팀 데이터를 불러오지 못했어요"><p role="alert">{error}</p><div className="inline-buttons">
+    <Button onClick={refresh}>다시 불러오기</Button><Button onClick={logout}>로그아웃</Button>
+  </div></AuthPanel>
+  if (!data) return <AuthPanel title="팀 데이터를 불러오는 중이에요"/>
+  return <Workspace data={data} change={change} message={message} teamName="세일즈맨" logout={logout} refresh={refresh}
+    passwordForm={<PasswordForm/>}/>
+}
+
+function Workspace({ data, change, message, teamName, syncMailbox, logout, refresh, passwordForm }: {
+  data: CRM; change: Change; message: string; teamName: string; syncMailbox?: () => void;
+  logout?: () => void; refresh?: () => void; passwordForm?: React.ReactNode
+}) {
   const { page, id, params } = useRoute()
-  const member = memberFor(data.activeMemberId)
+  const member = memberFor(data, data.activeMemberId)
   const [profileOpen, setProfileOpen] = useState(false)
   const pageName = nav.find(item => item.key === page)?.name ?? (page === 'profile' ? '마이페이지' : '팀 설정')
   const lead = data.leads.find(item => item.id === id)
@@ -33,10 +71,6 @@ export function App() {
     setProfileOpen(false)
     window.scrollTo(0, 0)
   }, [page])
-  useEffect(() => {
-    const timer = window.setTimeout(demoAutoSync, 18_000)
-    return () => window.clearTimeout(timer)
-  }, [])
 
   return <div className="shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>본문으로 이동</a>
@@ -57,22 +91,23 @@ export function App() {
       </nav>
     </aside>
     <div className="workspace-main">
-      <header className="topbar"><div className="breadcrumb"><span>영업팀</span><span className="crumb-divider" aria-hidden="true">/</span><strong>{pageName}</strong></div><div className="account" onKeyDown={event => {
+      <header className="topbar"><div className="breadcrumb"><span>{teamName}</span><span className="crumb-divider" aria-hidden="true">/</span><strong>{pageName}</strong></div><div className="account" onKeyDown={event => {
         if (event.key === 'Escape') { setProfileOpen(false); document.getElementById('account-toggle')?.focus() }
       }}>
-        <button id="account-toggle" type="button" className="account-button" aria-expanded={profileOpen} aria-controls="account-options" onClick={() => setProfileOpen(value => !value)}><Avatar id={member.id}/><span>{member.name}</span><ChevronDown size={15}/></button>
-        {profileOpen && <><button type="button" className="account-dismiss" tabIndex={-1} aria-label="프로필 메뉴 닫기" onClick={() => setProfileOpen(false)}/><div className="account-menu" id="account-options"><a href="#/profile" onClick={() => setProfileOpen(false)}><UserRound size={16}/>마이페이지</a><div className="account-divider"/><p>데모 팀원 전환</p>{members.map(user => <button type="button" key={user.id} aria-pressed={member.id === user.id} onClick={() => {
-          change(prev => ({ ...prev, activeMemberId: user.id }))
+        <button id="account-toggle" type="button" className="account-button" aria-expanded={profileOpen} aria-controls="account-options" onClick={() => setProfileOpen(value => !value)}><Avatar member={member}/><span>{member.name}</span><ChevronDown size={15}/></button>
+        {profileOpen && <><button type="button" className="account-dismiss" tabIndex={-1} aria-label="프로필 메뉴 닫기" onClick={() => setProfileOpen(false)}/><div className="account-menu" id="account-options"><a href="#/profile" onClick={() => setProfileOpen(false)}><UserRound size={16}/>마이페이지</a><div className="account-divider"/>
+        {logout ? <><button type="button" onClick={() => { setProfileOpen(false); refresh?.() }}>데이터 새로고침</button><button type="button" onClick={logout}><LogOut size={16}/>로그아웃</button></> : <><p>데모 팀원 전환</p>{data.members.map(user => <button type="button" key={user.id} aria-pressed={member.id === user.id} onClick={() => {
+          void change(prev => ({ ...prev, activeMemberId: user.id }))
           setProfileOpen(false)
           document.getElementById('account-toggle')?.focus()
-        }}><Avatar id={user.id}/><span>{user.name}</span>{member.id === user.id && <CircleCheck size={15} className="current-member"/>}</button>)}</div></>}
+        }}><Avatar member={user}/><span>{user.name}</span>{member.id === user.id && <CircleCheck size={15} className="current-member"/>}</button>)}</>}</div></>}
       </div></header>
       <main id="main-content" className="main-content" tabIndex={-1}>
         {page === '' && <Home data={data} change={change}/>}
-        {page === 'inbox' && <Inbox data={data} change={change} id={id} params={params} syncMailbox={() => syncMailbox()}/>}
+        {page === 'inbox' && <Inbox data={data} change={change} id={id} params={params} syncMailbox={syncMailbox}/>}
         {page === 'leads' && (id ? lead ? <LeadDetail key={lead.id + member.id} data={data} change={change} lead={lead} params={params}/> : <Empty title="리드를 찾을 수 없어요"><a href="#/leads">리드 목록으로 돌아가기</a></Empty> : <Leads data={data} change={change} params={params}/>)}
         {page === 'work' && <Work data={data} change={change} due={params.get('due')}/>}
-        {page === 'profile' && <Profile key={member.id} data={data} change={change}/>}
+        {page === 'profile' && <Profile key={member.id} data={data} change={change} passwordForm={passwordForm}/>}
         {page === 'settings' && <Settings data={data} change={change} syncMailbox={syncMailbox}/>}
         {!['', 'inbox', 'leads', 'work', 'profile', 'settings'].includes(page) && <Empty title="페이지를 찾을 수 없어요"><a href="#/">홈으로 돌아가기</a></Empty>}
       </main>

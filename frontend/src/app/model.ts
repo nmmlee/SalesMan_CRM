@@ -3,27 +3,33 @@ import { incomingMail } from '../data/demo'
 import { loadDemo, saveDemo } from '../data/storage'
 import { type CRM } from '../domain/crm'
 
-export type Change = (update: (current: CRM) => CRM, message?: string) => void
+export type Change = (update: (current: CRM) => CRM, message?: string) => Promise<{ id?: string } | null>
 
-export function useCRM() {
-  const [data, setData] = useState(loadDemo)
+function useFeedback() {
   const [message, setMessage] = useState('')
-  const current = useRef(data)
   const toast = useRef<number | undefined>(undefined)
-  const sync = useRef<number | undefined>(undefined)
-
   function notify(text: string) {
     window.clearTimeout(toast.current)
     setMessage(text)
     toast.current = window.setTimeout(() => setMessage(''), 3600)
   }
+  useEffect(() => () => window.clearTimeout(toast.current), [])
+  return { message, notify }
+}
 
-  const change: Change = (update, feedback) => {
+export function useDemoCRM() {
+  const [data, setData] = useState(loadDemo)
+  const { message, notify } = useFeedback()
+  const current = useRef(data)
+  const sync = useRef<number | undefined>(undefined)
+
+  const change: Change = async (update, feedback) => {
     const next = update(current.current)
     current.current = next
     setData(next)
     if (!saveDemo(next)) notify('브라우저 저장에 실패했어요. 변경 사항은 현재 화면에서만 유지됩니다.')
     else if (feedback) notify(feedback)
+    return {}
   }
 
   function syncMailbox() {
@@ -41,7 +47,6 @@ export function useCRM() {
   }
 
   useEffect(() => () => {
-    window.clearTimeout(toast.current)
     window.clearTimeout(sync.current)
   }, [])
 
@@ -52,6 +57,79 @@ export function useCRM() {
   }
 
   return { data, change, message, syncMailbox, demoAutoSync }
+}
+
+async function api<T>(action: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api?action=${action}`, { ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers } })
+  const result = await response.json().catch(() => ({})) as T & { error?: string }
+  if (!response.ok) throw new Error(result.error || '서버 요청에 실패했어요.')
+  return result
+}
+
+export function useRemoteCRM(userId: string) {
+  const [data, setData] = useState<CRM | null>(null)
+  const [error, setError] = useState('')
+  const { message, notify } = useFeedback()
+  const current = useRef<CRM | null>(null)
+  const busy = useRef(false)
+  const mounted = useRef(false)
+
+  async function reload() {
+    const fresh = (await api<{ data: CRM }>('snapshot')).data
+    if (!mounted.current) return
+    current.current = fresh
+    setData(fresh)
+    setError('')
+  }
+
+  async function refresh() {
+    if (busy.current) return
+    busy.current = true
+    try {
+      await reload()
+    } catch (cause) {
+      if (mounted.current) setError(cause instanceof Error ? cause.message : '팀 데이터를 불러오지 못했어요.')
+    } finally {
+      busy.current = false
+    }
+  }
+
+  useEffect(() => {
+    mounted.current = true
+    void refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      mounted.current = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [userId])
+
+  const change: Change = async (update, feedback) => {
+    if (!current.current) return null
+    if (busy.current) {
+      notify('이전 요청을 처리 중이에요. 잠시 후 다시 시도해 주세요.')
+      return null
+    }
+    busy.current = true
+    try {
+      const next = update(current.current)
+      const result = await api<{ id?: string }>('change', { method: 'POST', body: JSON.stringify({ after: next }) })
+      try {
+        await reload()
+        if (mounted.current && feedback) notify(feedback)
+      } catch {
+        if (mounted.current) setError('저장됐지만 최신 목록을 불러오지 못했어요. 다시 불러와 주세요.')
+      }
+      return result
+    } catch (cause) {
+      if (mounted.current) notify(cause instanceof Error ? `저장 실패 · ${cause.message}` : '저장에 실패했어요.')
+      return null
+    } finally {
+      busy.current = false
+    }
+  }
+  return { data, change, message, error, refresh }
 }
 
 export function useRoute() {

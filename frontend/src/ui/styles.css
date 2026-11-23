@@ -293,6 +293,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .customer-multiline { white-space: pre-wrap; }
 .stack { display: grid; gap: 14px; }
 .profile-panel { margin-bottom: 16px; }
+.profile-password { max-width: 460px; }
+.auth-shell { display: grid; place-items: center; min-height: 100dvh; padding: 24px; }
+.auth-panel { width: min(100%, 450px); padding: 28px; display: grid; gap: 16px; }
+.auth-brand { color: var(--blue); font-weight: 800; }
+.auth-panel h1 { font-size: var(--font-section); }
+.auth-panel > .button { justify-self: start; }
 .profile-identity { display: flex; gap: 10px; align-items: center; padding: 0 20px 13px; }
 .profile-form.form { padding: 0 20px 20px; display: flex; align-items: end; flex-wrap: wrap; }
 .profile-form label { width: min(100%, 350px); }

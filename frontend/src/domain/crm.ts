@@ -1,9 +1,10 @@
 export const stages = ['신규', '상담', '제안', '계약'] as const
 export const taskStatuses = ['대기', '진행 중', '완료'] as const
 
-export type Stage = typeof stages[number]
+export type Stage = string
+export type LeadStage = { id: Stage; label: string }
 export type TaskStatus = typeof taskStatuses[number]
-export type Member = { id: string; name: string; initials: string; role: string; color: string }
+export type Member = { id: string; name: string; initials: string; role: string; color: string; active?: boolean }
 export type CustomerProfile = {
   companySize?: string
   expectedUsers?: number
@@ -28,6 +29,8 @@ export type Template = { id: string; ownerId: string; name: string; subject: str
 export type Draft = { id: string; ownerId: string; leadId: string; from: string; to: string; subject: string; body: string; updatedAt: string; templateId?: string }
 export type SyncStatus = 'disconnected' | 'ready' | 'working' | 'failed' | 'reconnect'
 export type CRM = {
+  members: Member[]
+  stages: LeadStage[]
   activeMemberId: string
   leads: Lead[]
   tasks: Task[]
@@ -44,8 +47,11 @@ export const members: Member[] = [
   { id: 'hyunwoo', name: '이현우', initials: '현우', role: '영업 담당', color: 'violet' },
   { id: 'seoyeon', name: '박서연', initials: '서연', role: '기술 영업', color: 'green' },
 ]
-export function memberFor(id: string) {
-  return members.find(member => member.id === id) ?? members[0]
+export function memberFor(data: CRM, id: string): Member {
+  return data.members.find(member => member.id === id) ?? { id, name: id ? '알 수 없는 팀원' : '시스템', initials: '–', role: '', color: 'blue' }
+}
+export function stageLabel(data: CRM, id: Stage) {
+  return data.stages.find(stage => stage.id === id)?.label ?? '단계 미지정'
 }
 
 const kstDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' })
