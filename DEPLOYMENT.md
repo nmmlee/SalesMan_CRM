@@ -8,6 +8,12 @@
 
 `supabase/migrations/20261123020000_single_tenant_custom_login.sql`
 
+그 다음 아래 성능·동시 수정 마이그레이션도 실행한다.
+
+`supabase/migrations/20261123030000_fast_snapshot_and_concurrency.sql`
+
+두 번째 마이그레이션은 최초 화면 조회를 DB 함수 한 번으로 합치고, 각 업무·리드·문의·템플릿에 레코드 버전을 추가한다. 같은 항목을 동시에 편집하면 먼저 저장된 변경을 유지하고 늦은 저장 요청에는 충돌을 반환한다.
+
 이 마이그레이션은 목업 단계의 workspace 기반 테이블을 삭제하고 단일 CRM 테이블로 다시 만든다. 기존 테이블에 넣은 데이터가 있다면 실행 전에 백업한다. 마이그레이션에는 다음 항목이 포함된다.
 
 - `users`와 `app_sessions`

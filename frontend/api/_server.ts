@@ -2,17 +2,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Activity, CRM, Lead, LeadStage, Mail, Member, SyncStatus, Task, TaskStatus } from '../src/domain/crm.js'
 
 type UserRow = { id: string; display_name: string; role: string; active: boolean }
-type LeadRow = {
-  id: string; stage_id: string; owner_user_id: string; company_name: string; contact_name: string | null
-  contact_email: string | null; title: string; summary: string | null; company_size: string | null
-  expected_users: number | null; requested_services: string | null; adoption_purpose: string | null
-}
-type TaskRow = { id: string; lead_id: string; assignee_user_id: string; title: string; status: keyof typeof STATUS; due_date: string | null }
-type EmailRow = { id: string; company_name: string | null; sender_name: string | null; sender_email: string; subject: string; body_text: string | null; received_at: string; lead_id: string | null; is_excluded: boolean }
+type Versioned = { row_version: number }
+type LeadRow = Versioned & { id: string; stage_id: string; owner_user_id: string; company_name: string; contact_name: string | null; contact_email: string | null; title: string; summary: string | null; company_size: string | null; expected_users: number | null; requested_services: string | null; adoption_purpose: string | null }
+type TaskRow = Versioned & { id: string; lead_id: string; assignee_user_id: string; title: string; status: keyof typeof STATUS; due_date: string | null }
+type EmailRow = Versioned & { id: string; company_name: string | null; sender_name: string | null; sender_email: string; subject: string; body_text: string | null; received_at: string; lead_id: string | null; is_excluded: boolean }
 type ActivityRow = { id: string; lead_id: string; author_user_id: string | null; kind: keyof typeof ACTIVITIES; body: string; occurred_at: string }
-type TemplateRow = { id: string; owner_user_id: string; name: string; subject: string; body: string }
-type DraftRow = { id: string; owner_user_id: string; lead_id: string; template_id: string | null; from_address: string | null; to_address: string | null; subject: string; body: string; updated_at: string }
+type TemplateRow = Versioned & { id: string; owner_user_id: string; name: string; subject: string; body: string }
+type DraftRow = Versioned & { id: string; owner_user_id: string; lead_id: string; template_id: string | null; from_address: string | null; to_address: string | null; subject: string; body: string; updated_at: string }
+type SettingsRow = Versioned & { work_email: string | null }
+type ConnectionRow = Versioned & { id: string; sync_status: string; last_success_at: string | null }
+type Snapshot = { members: UserRow[]; stages: LeadStage[]; leads: LeadRow[]; tasks: TaskRow[]; mails: EmailRow[]; activities: ActivityRow[]; templates: TemplateRow[]; drafts: DraftRow[]; settings: SettingsRow | null; connection: ConnectionRow | null }
 type Fields = Record<string, string | number | boolean | null>
+export type MutationResult = { id?: string; entity?: 'lead' | 'task' | 'mail' | 'template' | 'draft' | 'profile' | 'mailbox' | 'registerLead'; recordId?: string; version?: number; temporaryId?: string; emailId?: string; mailVersion?: number }
 
 const STATUS = { pending: '대기', in_progress: '진행 중', completed: '완료' } as const
 const STATUS_CODE: Record<TaskStatus, keyof typeof STATUS> = { 대기: 'pending', '진행 중': 'in_progress', 완료: 'completed' }
@@ -24,104 +25,72 @@ function checked<T>({ data, error }: Result<T>) {
   if (error) throw new Error(error.message)
   return data
 }
+export class ConcurrencyError extends Error { constructor() { super('concurrent_update') } }
+function requireSaved<T>(value: T | null): T {
+  if (!value) throw new ConcurrencyError()
+  return value
+}
 
 export async function loadCRM(client: SupabaseClient, userId: string): Promise<CRM> {
-  const [membersResult, stagesResult, leadsResult, tasksResult, mailsResult, activitiesResult,
-    templatesResult, draftsResult, settingsResult, connectionResult] = await Promise.all([
-    client.from('users').select('id,display_name,role,active').eq('active', true).order('created_at').order('id'),
-    client.from('lead_stages').select('id,label').order('sort_order').order('id'),
-    client.from('leads').select('*').order('created_at', { ascending: false }).order('id'),
-    client.from('tasks').select('*').order('created_at', { ascending: false }).order('id'),
-    client.from('inbound_emails').select('*').order('received_at', { ascending: false }).order('id'),
-    client.from('lead_activities').select('*').order('occurred_at', { ascending: false }).order('id'),
-    client.from('mail_templates').select('*').eq('owner_user_id', userId).order('created_at', { ascending: false }).order('id'),
-    client.from('mail_drafts').select('*').eq('owner_user_id', userId).order('updated_at', { ascending: false }).order('id'),
-    client.from('user_settings').select('work_email').eq('user_id', userId).maybeSingle(),
-    client.from('mail_connections').select('sync_status,last_success_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-  ])
-  const members = checked(membersResult as Result<UserRow[]>) ?? []
-  const stages = checked(stagesResult as Result<LeadStage[]>) ?? []
-  const leads = checked(leadsResult as Result<LeadRow[]>) ?? []
-  const tasks = checked(tasksResult as Result<TaskRow[]>) ?? []
-  const mails = checked(mailsResult as Result<EmailRow[]>) ?? []
-  const activities = checked(activitiesResult as Result<ActivityRow[]>) ?? []
-  const templates = checked(templatesResult as Result<TemplateRow[]>) ?? []
-  const drafts = checked(draftsResult as Result<DraftRow[]>) ?? []
-  const profile = checked(settingsResult)
-  const mailbox = checked(connectionResult)
+  const snapshot = checked(await client.rpc('crm_snapshot', { p_user_id: userId })) as Snapshot
+  const members = snapshot.members ?? []
   if (!members.some(member => member.id === userId)) throw new Error('사용할 수 없는 계정입니다.')
-
   return {
     activeMemberId: userId,
-    members: members.map((row, index): Member => ({ id: row.id, name: row.display_name,
-      initials: row.display_name.slice(0, 2), role: row.role === 'admin' ? '관리자' : '팀원',
-      color: ['blue', 'violet', 'green'][index % 3], active: row.active })),
-    stages,
-    leads: leads.map(row => ({ id: row.id, stage: row.stage_id, ownerId: row.owner_user_id,
-      company: row.company_name, contact: row.contact_name ?? '', email: row.contact_email ?? '', title: row.title,
-      summary: row.summary ?? '', customerProfile: { companySize: row.company_size ?? '',
-        expectedUsers: row.expected_users ?? undefined, requestedServices: row.requested_services ?? '',
-        adoptionPurpose: row.adoption_purpose ?? '' } })),
-    tasks: tasks.map((row): Task => ({ id: row.id, leadId: row.lead_id, assigneeId: row.assignee_user_id,
-      title: row.title, status: STATUS[row.status], due: row.due_date ?? '' })),
-    mails: mails.map((row): Mail => ({ id: row.id, company: row.company_name ?? '', sender: row.sender_name ?? '',
-      email: row.sender_email, subject: row.subject, body: row.body_text ?? '', receivedAt: row.received_at,
-      leadId: row.lead_id ?? undefined, excluded: row.is_excluded })),
-    activities: activities.map((row): Activity => ({ id: row.id, leadId: row.lead_id,
-      authorId: row.author_user_id ?? '', type: ACTIVITIES[row.kind], text: row.body, at: row.occurred_at })),
-    templates: templates.map(row => ({ id: row.id, ownerId: row.owner_user_id, name: row.name, subject: row.subject, body: row.body })),
-    drafts: drafts.map(row => ({ id: row.id, ownerId: row.owner_user_id, leadId: row.lead_id,
-      templateId: row.template_id ?? undefined, from: row.from_address ?? '', to: row.to_address ?? '',
-      subject: row.subject, body: row.body, updatedAt: row.updated_at })),
-    profiles: profile ? { [userId]: profile.work_email ?? '' } : {},
-    mailbox: { status: (mailbox?.sync_status as SyncStatus | undefined) ?? 'disconnected',
-      lastSuccess: mailbox?.last_success_at ?? null },
+    members: members.map((row, index): Member => ({ id: row.id, name: row.display_name, initials: row.display_name.slice(0, 2), role: row.role === 'admin' ? '관리자' : '팀원', color: ['blue', 'violet', 'green'][index % 3], active: row.active })),
+    stages: snapshot.stages ?? [],
+    leads: (snapshot.leads ?? []).map(row => ({ id: row.id, version: row.row_version, stage: row.stage_id, ownerId: row.owner_user_id, company: row.company_name, contact: row.contact_name ?? '', email: row.contact_email ?? '', title: row.title, summary: row.summary ?? '', customerProfile: { companySize: row.company_size ?? '', expectedUsers: row.expected_users ?? undefined, requestedServices: row.requested_services ?? '', adoptionPurpose: row.adoption_purpose ?? '' } })),
+    tasks: (snapshot.tasks ?? []).map((row): Task => ({ id: row.id, version: row.row_version, leadId: row.lead_id, assigneeId: row.assignee_user_id, title: row.title, status: STATUS[row.status], due: row.due_date ?? '' })),
+    mails: (snapshot.mails ?? []).map((row): Mail => ({ id: row.id, version: row.row_version, company: row.company_name ?? '', sender: row.sender_name ?? '', email: row.sender_email, subject: row.subject, body: row.body_text ?? '', receivedAt: row.received_at, leadId: row.lead_id ?? undefined, excluded: row.is_excluded })),
+    activities: (snapshot.activities ?? []).map((row): Activity => ({ id: row.id, leadId: row.lead_id, authorId: row.author_user_id ?? '', type: ACTIVITIES[row.kind], text: row.body, at: row.occurred_at })),
+    templates: (snapshot.templates ?? []).map(row => ({ id: row.id, version: row.row_version, ownerId: row.owner_user_id, name: row.name, subject: row.subject, body: row.body })),
+    drafts: (snapshot.drafts ?? []).map(row => ({ id: row.id, version: row.row_version, ownerId: row.owner_user_id, leadId: row.lead_id, templateId: row.template_id ?? undefined, from: row.from_address ?? '', to: row.to_address ?? '', subject: row.subject, body: row.body, updatedAt: row.updated_at })),
+    profiles: snapshot.settings ? { [userId]: snapshot.settings.work_email ?? '' } : {},
+    profileVersion: snapshot.settings?.row_version,
+    mailbox: { status: (snapshot.connection?.sync_status as SyncStatus | undefined) ?? 'disconnected', lastSuccess: snapshot.connection?.last_success_at ?? null, version: snapshot.connection?.row_version, connectionId: snapshot.connection?.id },
   }
 }
 
 function leadFields(lead: Lead): Fields {
-  return { company_name: lead.company, title: lead.title, contact_name: lead.contact || null,
-    contact_email: lead.email || null, summary: lead.summary || null, owner_user_id: lead.ownerId,
-    stage_id: lead.stage, company_size: lead.customerProfile?.companySize || null,
-    expected_users: lead.customerProfile?.expectedUsers ?? null,
-    requested_services: lead.customerProfile?.requestedServices || null,
-    adoption_purpose: lead.customerProfile?.adoptionPurpose || null }
+  return { company_name: lead.company, title: lead.title, contact_name: lead.contact || null, contact_email: lead.email || null, summary: lead.summary || null, owner_user_id: lead.ownerId, stage_id: lead.stage, company_size: lead.customerProfile?.companySize || null, expected_users: lead.customerProfile?.expectedUsers ?? null, requested_services: lead.customerProfile?.requestedServices || null, adoption_purpose: lead.customerProfile?.adoptionPurpose || null }
 }
 function taskFields(task: Task): Fields {
-  return { lead_id: task.leadId, assignee_user_id: task.assigneeId, title: task.title,
-    status: STATUS_CODE[task.status], due_date: task.due || null }
+  return { lead_id: task.leadId, assignee_user_id: task.assigneeId, title: task.title, status: STATUS_CODE[task.status], due_date: task.due || null }
 }
 
-export async function persistCRM(client: SupabaseClient, userId: string, after: CRM): Promise<{ id?: string }> {
-  const before = await loadCRM(client, userId)
-  const writes: (() => Promise<{ id?: string }>)[] = []
+export async function persistCRM(client: SupabaseClient, userId: string, before: CRM, after: CRM): Promise<MutationResult> {
+  if (before.activeMemberId !== userId || after.activeMemberId !== userId) throw new Error('invalid_user')
+  const writes: (() => Promise<MutationResult>)[] = []
 
-  function records<T extends { id: string }>(table: string, original: T[], changed: T[], fields: (record: T) => Fields,
-    options: { owner?: boolean; delete?: boolean } = {}) {
+  function records<T extends { id: string; version?: number }>(entity: MutationResult['entity'], table: string, original: T[], changed: T[], fields: (record: T) => Fields, options: { owner?: boolean; delete?: boolean } = {}) {
     const old = new Map(original.map(record => [record.id, record]))
     const remaining = new Set(changed.map(record => record.id))
     for (const record of changed) {
       const prior = old.get(record.id)
       const payload = fields(record)
       if (!prior) {
-        writes.push(async () => checked(await client.from(table).insert({ id: record.id,
-          ...(options.owner ? { owner_user_id: userId } : {}), ...payload }).select('id').single())!)
+        writes.push(async () => {
+          const saved = checked(await client.from(table).insert({ id: record.id, ...(options.owner ? { owner_user_id: userId } : {}), ...payload }).select('id,row_version').single()) as { id: string; row_version: number }
+          return { id: saved.id, entity, recordId: saved.id, version: saved.row_version }
+        })
         continue
       }
       const previous = fields(prior)
       const patch = Object.fromEntries(Object.entries(payload).filter(([key, value]) => previous[key] !== value))
       if (!Object.keys(patch).length) continue
       writes.push(async () => {
-        let query = client.from(table).update(patch).eq('id', record.id)
+        let query = client.from(table).update(patch).eq('id', record.id).eq('row_version', prior.version ?? 1)
         if (options.owner) query = query.eq('owner_user_id', userId)
-        return checked(await query.select('id').single())!
+        const saved = requireSaved(checked(await query.select('id,row_version').maybeSingle()) as { id: string; row_version: number } | null)
+        return { id: saved.id, entity, recordId: saved.id, version: saved.row_version }
       })
     }
     if (options.delete) for (const record of original) {
       if (!remaining.has(record.id)) writes.push(async () => {
-        let query = client.from(table).delete().eq('id', record.id)
+        let query = client.from(table).delete().eq('id', record.id).eq('row_version', record.version ?? 1)
         if (options.owner) query = query.eq('owner_user_id', userId)
-        return checked(await query.select('id').single())!
+        requireSaved(checked(await query.select('id').maybeSingle()) as { id: string } | null)
+        return { entity, recordId: record.id }
       })
     }
   }
@@ -130,57 +99,50 @@ export async function persistCRM(client: SupabaseClient, userId: string, after: 
   if (linked) {
     const lead = after.leads.find(item => item.id === linked.leadId)
     if (!lead) throw new Error('연결할 리드가 없어요.')
-    const id = checked(await client.rpc('register_lead_from_email', { p_user_id: userId, p_email_id: linked.id,
-      p_title: lead.title, p_company_name: lead.company, p_contact_name: lead.contact || null,
-      p_contact_email: lead.email || null, p_summary: lead.summary || null }))
-    return { id }
+    const id = checked(await client.rpc('register_lead_from_email', { p_user_id: userId, p_email_id: linked.id, p_title: lead.title, p_company_name: lead.company, p_contact_name: lead.contact || null, p_contact_email: lead.email || null, p_summary: lead.summary || null })) as string
+    const mail = checked(await client.from('inbound_emails').select('row_version').eq('id', linked.id).single()) as Versioned
+    return { id, entity: 'registerLead', recordId: id, temporaryId: lead.id, emailId: linked.id, version: 1, mailVersion: mail.row_version }
   }
 
   const oldLeads = new Map(before.leads.map(lead => [lead.id, lead]))
   for (const lead of after.leads) {
     const prior = oldLeads.get(lead.id)
     if (!prior) {
-      writes.push(async () => checked(await client.from('leads').insert({ id: lead.id, ...leadFields(lead) }).select('id').single())!)
+      writes.push(async () => {
+        const saved = checked(await client.from('leads').insert({ id: lead.id, ...leadFields(lead) }).select('id,row_version').single()) as { id: string; row_version: number }
+        return { id: saved.id, entity: 'lead', recordId: saved.id, version: saved.row_version }
+      })
       continue
     }
     const payload = leadFields(lead)
     const previous = leadFields(prior)
-    const patch = Object.fromEntries(Object.entries(payload).filter(([key, value]) => previous[key] !== value))
-    if (!Object.keys(patch).length) continue
+    if (!Object.entries(payload).some(([key, value]) => previous[key] !== value)) continue
     writes.push(async () => {
-      const saved = checked(await client.from('leads').update(patch).eq('id', lead.id).select('id').single())!
-      if (prior.stage !== lead.stage) {
-        const from = before.stages.find(stage => stage.id === prior.stage)?.label ?? '이전 단계'
-        const to = before.stages.find(stage => stage.id === lead.stage)?.label ?? '다음 단계'
-        checked(await client.from('lead_activities').insert({ lead_id: lead.id, author_user_id: userId,
-          kind: 'stage_change', body: `${from} → ${to}`, previous_stage_id: prior.stage, next_stage_id: lead.stage }))
-      }
-      return saved
+      const { data, error } = await client.rpc('crm_update_lead', { p_user_id: userId, p_id: lead.id, p_expected_version: prior.version ?? 1, p_stage_id: lead.stage, p_owner_user_id: lead.ownerId, p_company_name: lead.company, p_contact_name: lead.contact || null, p_contact_email: lead.email || null, p_title: lead.title, p_summary: lead.summary || null, p_company_size: lead.customerProfile?.companySize || null, p_expected_users: lead.customerProfile?.expectedUsers ?? null, p_requested_services: lead.customerProfile?.requestedServices || null, p_adoption_purpose: lead.customerProfile?.adoptionPurpose || null })
+      if (error?.message.includes('concurrent_update')) throw new ConcurrencyError()
+      if (error) throw new Error(error.message)
+      return { id: lead.id, entity: 'lead', recordId: lead.id, version: Number(data) }
     })
   }
 
-  records('tasks', before.tasks, after.tasks, taskFields, { delete: true })
-  records('inbound_emails', before.mails, after.mails, mail => ({ is_excluded: !!mail.excluded }))
-  records('lead_activities', before.activities.filter(item => item.type !== '단계 변경'),
-    after.activities.filter(item => item.type !== '단계 변경'),
-    activity => ({ lead_id: activity.leadId, author_user_id: userId,
-      kind: ACTIVITY_CODE[activity.type as keyof typeof ACTIVITY_CODE], body: activity.text }))
-  records('mail_templates', before.templates, after.templates,
-    template => ({ name: template.name, subject: template.subject, body: template.body }), { owner: true })
-  records('mail_drafts', before.drafts, after.drafts,
-    draft => ({ lead_id: draft.leadId, template_id: draft.templateId || null, from_address: draft.from || null,
-      to_address: draft.to || null, subject: draft.subject, body: draft.body }), { owner: true })
+  records('task', 'tasks', before.tasks, after.tasks, taskFields, { delete: true })
+  records('mail', 'inbound_emails', before.mails, after.mails, mail => ({ is_excluded: !!mail.excluded }))
+  records(undefined, 'lead_activities', before.activities.filter(item => item.type !== '단계 변경'), after.activities.filter(item => item.type !== '단계 변경'), activity => ({ lead_id: activity.leadId, author_user_id: userId, kind: ACTIVITY_CODE[activity.type as keyof typeof ACTIVITY_CODE], body: activity.text }))
+  records('template', 'mail_templates', before.templates, after.templates, template => ({ name: template.name, subject: template.subject, body: template.body }), { owner: true })
+  records('draft', 'mail_drafts', before.drafts, after.drafts, draft => ({ lead_id: draft.leadId, template_id: draft.templateId || null, from_address: draft.from || null, to_address: draft.to || null, subject: draft.subject, body: draft.body }), { owner: true })
 
   if (after.profiles[userId] !== before.profiles[userId]) writes.push(async () => {
-    checked(await client.from('user_settings').upsert({ user_id: userId,
-      work_email: after.profiles[userId] || null }).select('user_id').single())
-    return {}
+    if (before.profileVersion == null) {
+      const saved = checked(await client.from('user_settings').insert({ user_id: userId, work_email: after.profiles[userId] || null }).select('row_version').single()) as Versioned
+      return { entity: 'profile', version: saved.row_version }
+    }
+    const saved = requireSaved(checked(await client.from('user_settings').update({ work_email: after.profiles[userId] || null }).eq('user_id', userId).eq('row_version', before.profileVersion).select('row_version').maybeSingle()) as Versioned | null)
+    return { entity: 'profile', version: saved.row_version }
   })
   if (after.mailbox.status !== before.mailbox.status) writes.push(async () => {
-    const connection = checked(await client.from('mail_connections').select('id').order('created_at', { ascending: false }).limit(1).maybeSingle())
-    if (!connection) throw new Error('연결된 공용 메일이 없어요.')
-    checked(await client.from('mail_connections').update({ sync_status: after.mailbox.status }).eq('id', connection.id).select('id').single())
-    return {}
+    if (!before.mailbox.connectionId || before.mailbox.version == null) throw new Error('연결된 공용 메일이 없어요.')
+    const saved = requireSaved(checked(await client.from('mail_connections').update({ sync_status: after.mailbox.status }).eq('id', before.mailbox.connectionId).eq('row_version', before.mailbox.version).select('id,row_version').maybeSingle()) as { id: string; row_version: number } | null)
+    return { entity: 'mailbox', recordId: saved.id, version: saved.row_version }
   })
 
   if (writes.length > 1) throw new Error('한 번에 한 항목만 저장할 수 있어요.')

@@ -4,6 +4,15 @@ import { loadDemo, saveDemo } from '../data/storage'
 import { type CRM } from '../domain/crm'
 
 export type Change = (update: (current: CRM) => CRM, message?: string) => Promise<{ id?: string } | null>
+type MutationResult = { id?: string; entity?: 'lead' | 'task' | 'mail' | 'template' | 'draft' | 'profile' | 'mailbox' | 'registerLead'; recordId?: string; version?: number; temporaryId?: string; emailId?: string; mailVersion?: number }
+
+class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
 
 function useFeedback() {
   const [message, setMessage] = useState('')
@@ -63,8 +72,27 @@ async function api<T>(action: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api?action=${action}`, { ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers } })
   const result = await response.json().catch(() => ({})) as T & { error?: string }
-  if (!response.ok) throw new Error(result.error || '서버 요청에 실패했어요.')
+  if (!response.ok) throw new ApiError(response.status, result.error || '서버 요청에 실패했어요.')
   return result
+}
+
+function applyMutation(data: CRM, result: MutationResult): CRM {
+  if (result.entity === 'registerLead' && result.temporaryId && result.recordId) {
+    return { ...data,
+      leads: data.leads.map(lead => lead.id === result.temporaryId
+        ? { ...lead, id: result.recordId!, version: result.version } : lead),
+      mails: data.mails.map(mail => mail.id === result.emailId
+        ? { ...mail, leadId: result.recordId, version: result.mailVersion } : mail) }
+  }
+  if (result.entity === 'profile') return { ...data, profileVersion: result.version }
+  if (result.entity === 'mailbox') return { ...data, mailbox: { ...data.mailbox, version: result.version } }
+  if (!result.entity || !result.recordId || result.version == null) return data
+  if (result.entity === 'lead') return { ...data, leads: data.leads.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
+  if (result.entity === 'task') return { ...data, tasks: data.tasks.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
+  if (result.entity === 'mail') return { ...data, mails: data.mails.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
+  if (result.entity === 'template') return { ...data, templates: data.templates.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
+  if (result.entity === 'draft') return { ...data, drafts: data.drafts.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
+  return data
 }
 
 export function useRemoteCRM(userId: string) {
@@ -113,17 +141,26 @@ export function useRemoteCRM(userId: string) {
     }
     busy.current = true
     try {
-      const next = update(current.current)
-      const result = await api<{ id?: string }>('change', { method: 'POST', body: JSON.stringify({ after: next }) })
-      try {
-        await reload()
-        if (mounted.current && feedback) notify(feedback)
-      } catch {
-        if (mounted.current) setError('저장됐지만 최신 목록을 불러오지 못했어요. 다시 불러와 주세요.')
+      const before = current.current
+      const next = update(before)
+      const result = await api<MutationResult>('change', { method: 'POST', body: JSON.stringify({ before, after: next }) })
+      const saved = applyMutation(next, result)
+      current.current = saved
+      if (mounted.current) {
+        setData(saved)
+        setError('')
+        if (feedback) notify(feedback)
       }
       return result
     } catch (cause) {
-      if (mounted.current) notify(cause instanceof Error ? `저장 실패 · ${cause.message}` : '저장에 실패했어요.')
+      if (cause instanceof ApiError && cause.status === 409) {
+        try {
+          await reload()
+          if (mounted.current) notify('다른 사용자가 먼저 수정했어요. 최신 내용을 불러왔습니다. 다시 확인해 주세요.')
+        } catch {
+          if (mounted.current) setError('동시 수정이 감지됐지만 최신 데이터를 불러오지 못했어요. 다시 불러와 주세요.')
+        }
+      } else if (mounted.current) notify(cause instanceof Error ? `저장 실패 · ${cause.message}` : '저장에 실패했어요.')
       return null
     } finally {
       busy.current = false

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { CRM } from '../src/domain/crm.js'
-import { loadCRM, persistCRM } from './_server.js'
+import { ConcurrencyError, loadCRM, persistCRM } from './_server.js'
 
 type SessionUser = { id: string; username: string; display_name: string; role: string }
 type ApiRequest = {
@@ -70,6 +70,7 @@ function publicUser(user: SessionUser) {
 
 function authError(error: unknown) {
   const message = error instanceof Error ? error.message : ''
+  if (error instanceof ConcurrencyError || message.includes('concurrent_update')) return { status: 409, message: '다른 사용자가 먼저 수정한 항목이에요.' }
   if (message.includes('username_taken')) return { status: 409, message: '이미 사용 중인 사용자명이에요.' }
   if (message.includes('invalid_credentials')) return { status: 401, message: '사용자명 또는 비밀번호를 확인해 주세요.' }
   if (message.includes('weak_password')) return { status: 400, message: '비밀번호는 8자 이상 입력해 주세요.' }
@@ -129,7 +130,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
     if (action === 'change' && req.method === 'POST') {
       const values = body(req)
-      const result = await persistCRM(client, user.id, values.after as CRM)
+      const result = await persistCRM(client, user.id, values.before as CRM, values.after as CRM)
       return res.status(200).json(result)
     }
     return res.status(404).json({ error: 'API 요청을 찾을 수 없어요.' })

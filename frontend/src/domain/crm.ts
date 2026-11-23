@@ -13,6 +13,7 @@ export type CustomerProfile = {
 }
 export type Lead = {
   id: string
+  version?: number
   company: string
   contact: string
   email: string
@@ -22,11 +23,11 @@ export type Lead = {
   ownerId: string
   customerProfile?: CustomerProfile
 }
-export type Task = { id: string; leadId: string; title: string; assigneeId: string; due: string; status: TaskStatus }
-export type Mail = { id: string; company: string; sender: string; email: string; subject: string; body: string; receivedAt: string; leadId?: string; excluded?: boolean }
+export type Task = { id: string; version?: number; leadId: string; title: string; assigneeId: string; due: string; status: TaskStatus }
+export type Mail = { id: string; version?: number; company: string; sender: string; email: string; subject: string; body: string; receivedAt: string; leadId?: string; excluded?: boolean }
 export type Activity = { id: string; leadId: string; type: '통화' | '미팅' | '메모' | '단계 변경'; text: string; authorId: string; at: string }
-export type Template = { id: string; ownerId: string; name: string; subject: string; body: string }
-export type Draft = { id: string; ownerId: string; leadId: string; from: string; to: string; subject: string; body: string; updatedAt: string; templateId?: string }
+export type Template = { id: string; version?: number; ownerId: string; name: string; subject: string; body: string }
+export type Draft = { id: string; version?: number; ownerId: string; leadId: string; from: string; to: string; subject: string; body: string; updatedAt: string; templateId?: string }
 export type SyncStatus = 'disconnected' | 'ready' | 'working' | 'failed' | 'reconnect'
 export type CRM = {
   members: Member[]
@@ -39,7 +40,8 @@ export type CRM = {
   templates: Template[]
   drafts: Draft[]
   profiles: Record<string, string>
-  mailbox: { status: SyncStatus; lastSuccess: string | null }
+  profileVersion?: number
+  mailbox: { status: SyncStatus; lastSuccess: string | null; version?: number; connectionId?: string }
 }
 
 export const members: Member[] = [
