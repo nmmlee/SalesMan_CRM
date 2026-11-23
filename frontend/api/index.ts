@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { CRM } from '../src/domain/crm'
-import { loadCRM, persistCRM } from '../src/data/server'
+import type { CRM } from '../src/domain/crm.js'
+import { loadCRM, persistCRM } from './_server.js'
 
 type SessionUser = { id: string; username: string; display_name: string; role: string }
 type ApiRequest = {

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Activity, CRM, Lead, LeadStage, Mail, Member, SyncStatus, Task, TaskStatus } from '../domain/crm'
+import type { Activity, CRM, Lead, LeadStage, Mail, Member, SyncStatus, Task, TaskStatus } from '../src/domain/crm.js'
 
 type UserRow = { id: string; display_name: string; role: string; active: boolean }
 type LeadRow = {
