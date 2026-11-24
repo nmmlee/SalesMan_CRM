@@ -7,7 +7,7 @@ const USERNAME = /^[a-z0-9][a-z0-9_-]{3,31}$/
 
 export function AuthPanel({ title, children }: { title: string; children?: ReactNode }) {
   return <main className="auth-shell"><section className="panel auth-panel">
-    <p className="auth-brand">세일즈맨</p><h1>{title}</h1>{children}
+    <p className="auth-brand">bpocrm</p><h1>{title}</h1>{children}
   </section></main>
 }
 

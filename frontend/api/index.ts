@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { CRM } from '../src/domain/crm.js'
+import type { CRMMutationState } from '../src/domain/crm.js'
 import { ConcurrencyError, loadCRM, persistCRM } from './_server.js'
+import { InvalidDirectoryChange, persistDirectory } from './_directory.js'
+import { canIngest, receiveInquiry } from './_inbox.js'
+import type { DirectoryChange } from '../src/domain/directory.js'
 
 type SessionUser = { id: string; username: string; display_name: string; role: string }
 type ApiRequest = {
@@ -71,6 +74,9 @@ function publicUser(user: SessionUser) {
 function authError(error: unknown) {
   const message = error instanceof Error ? error.message : ''
   if (error instanceof ConcurrencyError || message.includes('concurrent_update')) return { status: 409, message: '다른 사용자가 먼저 수정한 항목이에요.' }
+  if (error instanceof InvalidDirectoryChange) return { status: 400, message }
+  if (message.includes('loss_reason_required')) return { status: 400, message: '로스트 사유를 1~2,000자로 입력해 주세요.' }
+  if (message.includes('invalid_loss_transition')) return { status: 400, message: '진행 중인 리드에서만 로스트 처리를 할 수 있어요.' }
   if (message.includes('username_taken')) return { status: 409, message: '이미 사용 중인 사용자명이에요.' }
   if (message.includes('invalid_credentials')) return { status: 401, message: '사용자명 또는 비밀번호를 확인해 주세요.' }
   if (message.includes('weak_password')) return { status: 400, message: '비밀번호는 8자 이상 입력해 주세요.' }
@@ -85,6 +91,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === 'POST' && !postFromSameSite(req)) return res.status(403).json({ error: '허용되지 않은 요청이에요.' })
 
   try {
+    if (action === 'mail-ingest' && req.method === 'POST') {
+      const ingestToken = process.env.MAIL_INGEST_TOKEN
+      if (!ingestToken) return res.status(404).json({ error: '메일 수신이 설정되지 않았어요.' })
+      if (!canIngest(req.headers.authorization, ingestToken)) return res.status(401).json({ error: '메일 수신 인증에 실패했어요.' })
+      await receiveInquiry(database(), body(req))
+      return res.status(200).json({ ok: true })
+    }
     const client = database()
     if (action === 'signup' && req.method === 'POST') {
       const values = body(req)
@@ -128,9 +141,24 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (action === 'snapshot' && req.method === 'GET') {
       return res.status(200).json({ data: await loadCRM(client, user.id) })
     }
+    if (action === 'mail' && req.method === 'GET') {
+      const id = req.query.id
+      if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+        return res.status(400).json({ error: '메일 주소를 확인해 주세요.' })
+      }
+      const { data, error } = await client.from('inbound_emails').select('body_text').eq('id', id).maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) return res.status(404).json({ error: '메일을 찾을 수 없어요.' })
+      return res.status(200).json({ body: data.body_text ?? '' })
+    }
+    if (action === 'directory' && req.method === 'POST') {
+      const values = body(req)
+      const id = await persistDirectory(client, user.id, values.change as DirectoryChange | undefined)
+      return res.status(200).json({ id, data: await loadCRM(client, user.id) })
+    }
     if (action === 'change' && req.method === 'POST') {
       const values = body(req)
-      const result = await persistCRM(client, user.id, values.before as CRM, values.after as CRM)
+      const result = await persistCRM(client, user.id, values.before as CRMMutationState, values.after as CRMMutationState)
       return res.status(200).json(result)
     }
     return res.status(404).json({ error: 'API 요청을 찾을 수 없어요.' })

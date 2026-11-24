@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { FilePenLine, Plus } from 'lucide-react'
 import { applyTemplate, dateTime, memberFor, upsert, type CRM, type Draft, type Lead, type Template } from '../../domain/crm'
 import type { Change } from '../../app/model'
-import { Avatar, Button, Empty, Modal, PageTitle, SectionTitle } from '../../ui/components'
+import { Avatar, Button, Empty, FormActions, Modal, PageTitle, SectionTitle } from '../../ui/components'
 
 function DraftEditor({ data, change, lead, draft, onClose }: { data: CRM; change: Change; lead: Lead; draft?: Draft; onClose: () => void }) {
   const member = memberFor(data, data.activeMemberId)
@@ -48,8 +48,7 @@ function DraftEditor({ data, change, lead, draft, onClose }: { data: CRM; change
     <label>제목<input required value={subject} onChange={event => setSubject(event.target.value)}/></label>
     <label>본문<textarea required rows={7} value={body} onChange={event => setBody(event.target.value)}/></label>
     {(subject.includes('[입력 필요:') || body.includes('[입력 필요:')) && <div className="inline-notice" role="status">‘입력 필요’로 표시된 정보를 확인해 주세요.</div>}
-    {error && <p className="error-text" role="alert">{error}</p>}
-    <div className="form-actions"><Button onClick={onClose}>취소</Button><Button type="submit" tone="primary">초안 저장</Button></div>
+    <FormActions onCancel={onClose} error={error} label="초안 저장"/>
   </form></Modal>
 }
 

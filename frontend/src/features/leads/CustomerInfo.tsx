@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Pencil } from 'lucide-react'
 import type { Change } from '../../app/model'
 import type { CustomerProfile, Lead } from '../../domain/crm'
-import { Button, Modal, SectionTitle } from '../../ui/components'
+import { Button, FormActions, Modal, SectionTitle } from '../../ui/components'
 
 const userCountFormat = new Intl.NumberFormat('ko-KR')
 
@@ -74,10 +74,7 @@ export function CustomerInfo({ lead, change }: { lead: Lead; change: Change }) {
         </div>
         <label>희망 서비스<textarea name="requestedServices" rows={2} defaultValue={profile?.requestedServices}/></label>
         <label>도입 목적<textarea name="adoptionPurpose" rows={3} defaultValue={profile?.adoptionPurpose}/></label>
-        <div className="form-actions">
-          <Button onClick={() => setEditing(false)}>취소</Button>
-          <Button type="submit" tone="primary">저장</Button>
-        </div>
+        <FormActions onCancel={() => setEditing(false)}/>
       </form>
     </Modal>}
   </section>

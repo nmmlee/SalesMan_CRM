@@ -1,5 +1,6 @@
 import { members, stages, type CRM } from '../domain/crm'
 import { createDemoData } from './demo'
+import { migrateDemoDirectory } from './demoDirectory'
 
 const storageKey = 'salesman-crm-demo-v1'
 
@@ -11,7 +12,7 @@ export function loadDemo(): CRM {
       data.members ??= members
       data.stages ??= stages.map(label => ({ id: label, label }))
       if (data.mailbox.status === 'working') data.mailbox.status = 'ready'
-      return data
+      return migrateDemoDirectory(data)
     }
   } catch {
     return createDemoData()

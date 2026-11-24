@@ -1,4 +1,5 @@
 import { dateKey, members, stages, type CRM, type Mail } from '../domain/crm'
+import { migrateDemoDirectory } from './demoDirectory'
 
 export function minutesAgo(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString()
@@ -13,9 +14,9 @@ export function incomingMail(): Mail {
 }
 
 export function createDemoData(): CRM {
-  return {
+  return migrateDemoDirectory({
     members,
-    stages: stages.map(label => ({ id: label, label })),
+    stages: stages.map(label => ({ id: label, label, won: label === '수주' })),
     activeMemberId: 'minji',
     profiles: { minji: 'minji@salesman.example', hyunwoo: '', seoyeon: '' },
     mailbox: { status: 'ready', lastSuccess: minutesAgo(12) },
@@ -51,5 +52,5 @@ export function createDemoData(): CRM {
       { id: 'tpl2', ownerId: 'minji', name: '미팅 일정 제안', subject: '{{고객사명}} 미팅 일정 제안', body: '안녕하세요, {{담당자명}}님.\n\n제품 소개 미팅 일정을 조율하고자 합니다. 가능하신 시간대를 알려주시면 감사하겠습니다.\n\n{{내이름}} 드림' },
     ],
     drafts: [],
-  }
+  })
 }

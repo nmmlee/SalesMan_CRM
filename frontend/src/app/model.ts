@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { incomingMail } from '../data/demo'
 import { loadDemo, saveDemo } from '../data/storage'
-import { type CRM } from '../domain/crm'
+import type { CRM, CRMMutationState } from '../domain/crm'
+import type { DirectoryChange } from '../domain/directory'
+import { applyDemoDirectory } from '../data/demoDirectory'
 
 export type Change = (update: (current: CRM) => CRM, message?: string) => Promise<{ id?: string } | null>
-type MutationResult = { id?: string; entity?: 'lead' | 'task' | 'mail' | 'template' | 'draft' | 'profile' | 'mailbox' | 'registerLead'; recordId?: string; version?: number; temporaryId?: string; emailId?: string; mailVersion?: number }
+export type SaveDirectory = (operation: DirectoryChange, message?: string) => Promise<{ id?: string } | null>
+type MutationResult = { id?: string; entity?: 'lead' | 'task' | 'mail' | 'template' | 'draft' | 'profile' | 'mailbox'; recordId?: string; version?: number }
 
 class ApiError extends Error {
   status: number
@@ -65,7 +68,17 @@ export function useDemoCRM() {
     }
   }
 
-  return { data, change, message, syncMailbox, demoAutoSync }
+  const saveDirectory: SaveDirectory = async (operation, feedback) => {
+    try {
+      const result = applyDemoDirectory(current.current, operation)
+      await change(() => result.data, feedback)
+      return { id: result.id }
+    } catch (error) {
+      notify((error as Error).message)
+      return null
+    }
+  }
+  return { data, change, saveDirectory, message, syncMailbox, demoAutoSync }
 }
 
 async function api<T>(action: string, init?: RequestInit): Promise<T> {
@@ -76,14 +89,11 @@ async function api<T>(action: string, init?: RequestInit): Promise<T> {
   return result
 }
 
+export function loadMailBody(id: string, signal: AbortSignal) {
+  return api<{ body: string }>(`mail&id=${encodeURIComponent(id)}`, { signal })
+}
+
 function applyMutation(data: CRM, result: MutationResult): CRM {
-  if (result.entity === 'registerLead' && result.temporaryId && result.recordId) {
-    return { ...data,
-      leads: data.leads.map(lead => lead.id === result.temporaryId
-        ? { ...lead, id: result.recordId!, version: result.version } : lead),
-      mails: data.mails.map(mail => mail.id === result.emailId
-        ? { ...mail, leadId: result.recordId, version: result.mailVersion } : mail) }
-  }
   if (result.entity === 'profile') return { ...data, profileVersion: result.version }
   if (result.entity === 'mailbox') return { ...data, mailbox: { ...data.mailbox, version: result.version } }
   if (!result.entity || !result.recordId || result.version == null) return data
@@ -93,6 +103,27 @@ function applyMutation(data: CRM, result: MutationResult): CRM {
   if (result.entity === 'template') return { ...data, templates: data.templates.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
   if (result.entity === 'draft') return { ...data, drafts: data.drafts.map(item => item.id === result.recordId ? { ...item, version: result.version } : item) }
   return data
+}
+
+function changedRecords<T extends { id: string }>(rows: T[], other: T[]) {
+  if (rows === other) return []
+  const previous = new Map(other.map(row => [row.id, row]))
+  return rows.filter(row => previous.get(row.id) !== row)
+}
+
+function mutationState(data: CRM, other: CRM): CRMMutationState {
+  return {
+    activeMemberId: data.activeMemberId,
+    leads: changedRecords(data.leads, other.leads),
+    tasks: changedRecords(data.tasks, other.tasks),
+    mails: changedRecords(data.mails, other.mails),
+    activities: changedRecords(data.activities, other.activities),
+    templates: changedRecords(data.templates, other.templates),
+    drafts: changedRecords(data.drafts, other.drafts),
+    profiles: data.profiles,
+    profileVersion: data.profileVersion,
+    mailbox: data.mailbox,
+  }
 }
 
 export function useRemoteCRM(userId: string) {
@@ -133,7 +164,7 @@ export function useRemoteCRM(userId: string) {
     }
   }, [userId])
 
-  const change: Change = async (update, feedback) => {
+  async function mutate<R>(save: (before: CRM) => Promise<{ saved: CRM; result: R }>, feedback?: string) {
     if (!current.current) return null
     if (busy.current) {
       notify('이전 요청을 처리 중이에요. 잠시 후 다시 시도해 주세요.')
@@ -141,10 +172,7 @@ export function useRemoteCRM(userId: string) {
     }
     busy.current = true
     try {
-      const before = current.current
-      const next = update(before)
-      const result = await api<MutationResult>('change', { method: 'POST', body: JSON.stringify({ before, after: next }) })
-      const saved = applyMutation(next, result)
+      const { saved, result } = await save(current.current)
       current.current = saved
       if (mounted.current) {
         setData(saved)
@@ -166,7 +194,20 @@ export function useRemoteCRM(userId: string) {
       busy.current = false
     }
   }
-  return { data, change, message, error, refresh }
+  const change: Change = (update, feedback) => mutate(async before => {
+    const next = update(before)
+    const result = await api<MutationResult>('change', { method: 'POST', body: JSON.stringify({
+      before: mutationState(before, next), after: mutationState(next, before),
+    }) })
+    return { saved: applyMutation(next, result), result }
+  }, feedback)
+
+  const saveDirectory: SaveDirectory = (operation, feedback) => mutate(async () => {
+    const { id, data: saved } = await api<{ id?: string; data: CRM }>('directory', { method: 'POST', body: JSON.stringify({ change: operation }) })
+    return { saved, result: { id } }
+  }, feedback)
+
+  return { data, change, saveDirectory, message, error, refresh }
 }
 
 export function useRoute() {

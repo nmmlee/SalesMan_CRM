@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { ChevronDown, Plus } from 'lucide-react'
 import { upsert, type CRM, type Template } from '../../domain/crm'
 import type { Change } from '../../app/model'
-import { Button, Empty, Modal } from '../../ui/components'
+import { Button, Empty, FormActions, Modal } from '../../ui/components'
 
 export function Templates({ data, change }: { data: CRM; change: Change }) {
   const memberId = data.activeMemberId
@@ -34,7 +34,7 @@ export function Templates({ data, change }: { data: CRM; change: Change }) {
       <label>제목<input name="subject" required defaultValue={editor === 'new' ? '' : editor.subject}/></label>
       <label>본문<textarea name="body" required rows={6} defaultValue={editor === 'new' ? '' : editor.body}/></label>
       <div className="inline-notice">사용할 수 있는 항목 <code>{'{{고객사명}} · {{담당자명}} · {{내이름}}'}</code></div>
-      <div className="form-actions"><Button onClick={() => setEditor(null)}>취소</Button><Button type="submit" tone="primary">템플릿 저장</Button></div>
+      <FormActions onCancel={() => setEditor(null)} label="템플릿 저장"/>
     </form></Modal>}
   </>
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, Plus, Trash2 } from 'lucide-react'
 import { type CRM, type Task, type TaskStatus, dueLabel, memberFor, shortDate, sortTasks, taskStatuses, upsert } from '../../domain/crm'
 import type { Change } from '../../app/model'
-import { Avatar, Badge, Button, Empty, Modal, PageTitle, SearchBox, SectionTitle, TabPanel, Tabs, TextLink } from '../../ui/components'
+import { Badge, Button, Empty, FormActions, Modal, PageTitle, Person, SectionTitle, TableToolbar, TabPanel, Tabs, TextLink } from '../../ui/components'
 import { FilterSelect } from '../../ui/FilterSelect'
 
 const statusTones = { 대기: 'neutral', '진행 중': 'info', 완료: 'warning' } as const
@@ -21,7 +21,7 @@ export function TaskTable({ data, tasks, change, compact = false, onEdit, onDele
       return <tr key={task.id}>
         <td>{onEdit ? <button type="button" className="row-title row-button" onClick={() => onEdit(task)}>{task.title}</button> : <TextLink className="row-title" to={`/leads/${task.leadId}?tab=업무&task=${task.id}`}>{task.title}</TextLink>}
           {lead && <TextLink className="row-meta" to={`/leads/${lead.id}`}>{lead.company}</TextLink>}</td>
-        {!compact && <td><span className="person"><Avatar member={memberFor(data, task.assigneeId)}/>{memberFor(data, task.assigneeId).name}</span></td>}
+        {!compact && <td><Person member={memberFor(data, task.assigneeId)}/></td>}
         <td>{onEdit ? <FilterSelect label={`${task.title} 상태`} menuTitle="업무 상태" value={task.status}
           options={statusOptions} compact onChange={value => change(current => ({
             ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, status: value as TaskStatus } : item),
@@ -63,10 +63,7 @@ export function TaskForm({ data, change, task, leadId, onClose }: { data: CRM; c
           <span>상태</span>
           <FilterSelect label="상태" value={status} options={statusOptions} compact onChange={value => setStatus(value as TaskStatus)}/>
         </div>
-        <div className={`form-actions${task ? ' task-editor-actions' : ''}`}>
-          <Button onClick={onClose}>취소</Button>
-          <Button type="submit" tone="primary">저장</Button>
-        </div>
+        <FormActions onCancel={onClose} centered={!!task}/>
       </form>
   </Modal>
 }
@@ -97,13 +94,12 @@ export function Work({ data, change, leadId, due, taskId }: { data: CRM; change:
     <section className="panel" ref={workPanel} tabIndex={-1} aria-label={leadId ? '후속 업무 목록' : '업무 목록'}>
       {leadId ? <><SectionTitle title="후속 업무" count={visible.length}>{add}</SectionTitle>{table}</> : <>
         <Tabs tabs={workTabs} current={tab} onChange={setTab} label="업무 범위" />
-        <TabPanel tabs={workTabs} current={tab}><div className="toolbar">
-          <SearchBox value={search} onChange={setSearch} placeholder="업무 또는 고객사 검색"/>
+        <TabPanel tabs={workTabs} current={tab}><TableToolbar search={search} onSearch={setSearch}
+          placeholder="업무 또는 고객사 검색" count={visible.length} placement="below-tabs">
           <FilterSelect value={status} onChange={setStatus} options={['전체 상태', ...taskStatuses]} label="업무 상태 필터"/>
           <FilterSelect value={deadline} onChange={setDeadline} options={['전체 기한', '오늘 마감', '기한 초과']} label="업무 기한 필터"/>
           {tab === '팀 업무' && <FilterSelect value={assignee} onChange={setAssignee} options={[{ value: '', label: '전체 담당자' }, ...data.members.map(member => ({ value: member.id, label: member.name }))]} label="담당자 필터"/>}
-          <span className="result-count">총 {visible.length}건</span>
-        </div>{table}</TabPanel>
+        </TableToolbar>{table}</TabPanel>
       </>}
     </section>
     {editor && <TaskForm data={data} change={change} task={editor === 'new' ? undefined : editor} leadId={leadId} onClose={() => setEditor(null)}/>}
